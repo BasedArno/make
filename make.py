@@ -36,6 +36,10 @@ def run(*args, **kwargs):
 ## ------
 
 ## imported rule definitions
+class Error(Exception):
+    """Base class for exceptions in this module."""
+    pass
+
 # rule class wrapper for function
 class Rule(object):
     __all__ = set()
@@ -44,11 +48,35 @@ class Rule(object):
         self.fn = fn
         self.targets = []
         self.sources = []
+        self.node = "singleton"
     def __call__(self,  *args, **kwargs):
         self.fn(*args, **kwargs)
     def add_relation(self, targets, sources):
-        self.targets = targets
-        self.sources = sources
+        # check to see if targets was a single string
+        if type(targets) == str:
+            self.targets = [targets]
+        else:
+            self.targets = targets
+
+        # check to see if sources was a single string
+        if type(sources) == str:
+            self.sources = [sources]
+        else:
+            self.sources = sources
+
+        # classify the node type
+        if len(self.targets) == 0 and len(self.sources) == 0:
+            self.node = "singleton"
+        elif len(self.targets) == 1 and len(self.sources) == 0:
+            self.node = "root"
+        elif len(self.targets) == 1 and len(self.sources) == 1:
+            self.node = "branch"
+        elif len(self.targets) == 1 and len(self.sources) > 1:
+            self.node = "fork"
+        elif len(self.targets) == len(self.sources):
+            self.node = "kbranch"
+        else:
+            raise Error()
     def rule_name(self):
         return self.fn.__name__
 
@@ -65,50 +93,9 @@ __default__ = "build"
 ## ------
 
 ##
-class graph(object):
-    def __init__(self):
-        self.vertexes = []
-    def is_vertex(self, name):
-        for v in self.vertexes:
-            if name == v[0]:
-                return True
-        return False
-    def add_vertex(self, name):
-        if not is_vertex(name):
-            self.vertexes.append([name])
-        return
-    def is_edge(self, v1, v2):
-        # search through the vertexes for the first vertex
-        for v in self.vertexes:
-            if v1 == v[0]:
-                # search through the connected vertexes for the second
-                for w in v[1:]:
-                    if w == v2:
-                        return True
-        # it wasn't found
-        return False
-    def add_edge(self, v1, v2):
-        if self.is_edge(v1, v2):
-            return
-
-        if self.is_vertex(v1):
-            for idx in range(len(self.vertexes)):
-                if v1 == self.vertexes[idx][0]:
-                    self.vertexes[idx].append(v2)
-                    break
-        else:
-            self.add_vertex(v1)
-            self.vertexes[-1].append(v2)
-
-
-
 ## ------
 
 ## make magic
-def get_targets(targets):
-    pass
-
-# instead
 def get_hash(file):
     """ Evaluate md5 checksum of file. """
     BUF_SIZE = 65536  # lets read stuff in 64kb chunks!
@@ -122,22 +109,30 @@ def get_hash(file):
 
 def execute(job):
     # check to make sure all sources have been built
-    if len(job.sources) > 0:
+    if job.node == "singleton":
+        job()
+    elif job.node == "root":
+        job()
+    elif job.node == "branch":
         for source in job.sources:
             for other_job in job.__all__:
                 if source == other_job.rule_name():
                     execute(other_job)
-    # check if rule has multiple targets
-    if len(job.targets) > 1:
-        # check to make sure target length and sources length are the same
-        if len(job.targets) == len(job.sources):
-            for idx in range(len(job.targets)):
-                job(job.targets[idx], job.sources[idx])
-        else:
-            assert False, "targets and sources do not match 1-1"
-    else:
+                    job()
+                    break
+    elif job.node == "fork":
+        for source in job.sources:
+            for other_job in job.__all__:
+                if source == other_job.rule_name():
+                    execute(other_job)
         job()
-
+    elif job.node == "kbranch":
+        for source in job.sources:
+            for other_job in job.__all__:
+                if source == other_job.rule_name():
+                    execute(other_job)
+        for idx in range(len(job.targets)):
+            job(job.targets[idx], job.sources[idx])
 
 def main(file_name = 'build.py', debug_mode = True, *targets):
     """
